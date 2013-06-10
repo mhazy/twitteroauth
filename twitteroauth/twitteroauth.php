@@ -18,11 +18,11 @@ class TwitterOAuth {
   /* Contains the last API call. */
   public $url;
   /* Set up the API root URL. */
-  public $host = "https://api.twitter.com/1/";
+  public $host = "https://api.twitter.com/1.1/";
   /* Set timeout default. */
   public $timeout = 30;
   /* Set connect timeout. */
-  public $connecttimeout = 30; 
+  public $connecttimeout = 30;
   /* Verify SSL Cert. */
   public $ssl_verifypeer = FALSE;
   /* Respons format. */
@@ -50,7 +50,7 @@ class TwitterOAuth {
   /**
    * Debug helpers
    */
-  function lastStatusCode() { return $this->http_status; }
+  function lastStatusCode() { return $this->http_code; }
   function lastAPICall() { return $this->last_api_call; }
 
   /**
@@ -72,13 +72,14 @@ class TwitterOAuth {
    *
    * @returns a key/value array containing oauth_token and oauth_token_secret
    */
-  function getRequestToken($oauth_callback) {
+  function getRequestToken($oauth_callback = NULL) {
     $parameters = array();
-    $parameters['oauth_callback'] = $oauth_callback; 
+    if (!empty($oauth_callback)) {
+      $parameters['oauth_callback'] = $oauth_callback;
+    }
     $request = $this->oAuthRequest($this->requestTokenURL(), 'GET', $parameters);
-    $token = OAuthUtil::parse_parameters($request);
-    $this->token = new OAuthConsumer($token['oauth_token'], $token['oauth_token_secret']);
-    return $token;
+
+    return $this->getToken($request);
   }
 
   /**
@@ -106,13 +107,14 @@ class TwitterOAuth {
    *                "user_id" => "9436992",
    *                "screen_name" => "abraham")
    */
-  function getAccessToken($oauth_verifier) {
+  function getAccessToken($oauth_verifier = FALSE) {
     $parameters = array();
-    $parameters['oauth_verifier'] = $oauth_verifier;
+    if (!empty($oauth_verifier)) {
+      $parameters['oauth_verifier'] = $oauth_verifier;
+    }
     $request = $this->oAuthRequest($this->accessTokenURL(), 'GET', $parameters);
-    $token = OAuthUtil::parse_parameters($request);
-    $this->token = new OAuthConsumer($token['oauth_token'], $token['oauth_token_secret']);
-    return $token;
+
+    return $this->getToken($request);
   }
 
   /**
@@ -123,16 +125,15 @@ class TwitterOAuth {
    *                "user_id" => "9436992",
    *                "screen_name" => "abraham",
    *                "x_auth_expires" => "0")
-   */  
+   */
   function getXAuthToken($username, $password) {
     $parameters = array();
     $parameters['x_auth_username'] = $username;
     $parameters['x_auth_password'] = $password;
     $parameters['x_auth_mode'] = 'client_auth';
     $request = $this->oAuthRequest($this->accessTokenURL(), 'POST', $parameters);
-    $token = OAuthUtil::parse_parameters($request);
-    $this->token = new OAuthConsumer($token['oauth_token'], $token['oauth_token_secret']);
-    return $token;
+
+    return $this->getToken($request);
   }
 
   /**
@@ -145,12 +146,12 @@ class TwitterOAuth {
     }
     return $response;
   }
-  
+
   /**
    * POST wrapper for oAuthRequest.
    */
-  function post($url, $parameters = array()) {
-    $response = $this->oAuthRequest($url, 'POST', $parameters);
+  function post($url, $parameters = array(), $files = array()) {
+    $response = $this->oAuthRequest($url, 'POST', $parameters, $files);
     if ($this->format === 'json' && $this->decode_json) {
       return json_decode($response);
     }
@@ -171,7 +172,7 @@ class TwitterOAuth {
   /**
    * Format and sign an OAuth / API request
    */
-  function oAuthRequest($url, $method, $parameters) {
+  function oAuthRequest($url, $method, $parameters, $files = array()) {
     if (strrpos($url, 'https://') !== 0 && strrpos($url, 'http://') !== 0) {
       $url = "{$this->host}{$url}.{$this->format}";
     }
@@ -181,7 +182,7 @@ class TwitterOAuth {
     case 'GET':
       return $this->http($request->to_url(), 'GET');
     default:
-      return $this->http($request->get_normalized_http_url(), $method, $request->to_postdata());
+      return $this->http($request->get_normalized_http_url(), $method, $request->to_postdata(), $files);
     }
   }
 
@@ -190,7 +191,7 @@ class TwitterOAuth {
    *
    * @return API results
    */
-  function http($url, $method, $postfields = NULL) {
+  function http($url, $method, $postfields = NULL, $files = array()) {
     $this->http_info = array();
     $ci = curl_init();
     /* Curl settings */
@@ -206,7 +207,20 @@ class TwitterOAuth {
     switch ($method) {
       case 'POST':
         curl_setopt($ci, CURLOPT_POST, TRUE);
-        if (!empty($postfields)) {
+        if (!empty($files)) {
+          foreach ($files as $k => $v) {
+              if (0 !== strpos($v, '@'))
+              {
+                 $files[$k] = '@'.$v;
+              }
+          }
+          curl_setopt($ci, CURLOPT_POSTFIELDS, $files);
+
+          if (!empty($postfields)) {
+              $url = $url.'?'.$postfields;
+          }
+
+        } else if (!empty($postfields)) {
           curl_setopt($ci, CURLOPT_POSTFIELDS, $postfields);
         }
         break;
@@ -237,5 +251,29 @@ class TwitterOAuth {
       $this->http_header[$key] = $value;
     }
     return strlen($header);
+  }
+
+  /**
+   * Added to go well with the Symfony2 DIC
+   * @param  $oauth_token
+   * @param  $oauth_token_secret
+   * @return void
+   */
+  function setOAuthToken($oauth_token, $oauth_token_secret) {
+      $this->token = new OAuthConsumer($oauth_token, $oauth_token_secret);
+  }
+
+  /**
+   * Avoid the notices if the token is not set
+   * @param  $request
+   * @return array
+   */
+  function getToken($request) {
+    $token = OAuthUtil::parse_parameters($request);
+    if (isset($token['oauth_token'], $token['oauth_token_secret'])) {
+        $this->token = new OAuthConsumer($token['oauth_token'], $token['oauth_token_secret']);
+    }
+
+    return $token;
   }
 }
